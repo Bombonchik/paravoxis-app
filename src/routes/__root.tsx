@@ -11,6 +11,11 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { installBrowserLogger } from "@/lib/dev/browser-logger";
+
+// Patch console so [tts/...], [live-translator], [streams], [workspace],
+// [transcribe] logs are forwarded to the dev server (tail /tmp/paravoxis-browser.log).
+installBrowserLogger();
 
 function NotFoundComponent() {
   return (

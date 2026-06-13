@@ -6,6 +6,34 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
+import fs from "node:fs";
+
+// Dev-only: receive POSTs of browser console logs at /__browser_log and append
+// them to /tmp/paravoxis-browser.log so they can be tailed without copy-pasting.
+const LOG_PATH = "/tmp/paravoxis-browser.log";
+function browserLogSinkPlugin() {
+  return {
+    name: "paravoxis-browser-log-sink",
+    apply: "serve" as const,
+    configureServer(server: any) {
+      server.middlewares.use("/__browser_log", (req: any, res: any, next: any) => {
+        if (req.method !== "POST") return next();
+        let body = "";
+        req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+        req.on("end", () => {
+          const line = `${new Date().toISOString()} ${body.replace(/\s+/g, " ").slice(0, 4000)}\n`;
+          try {
+            fs.appendFileSync(LOG_PATH, line);
+          } catch {
+            /* noop */
+          }
+          res.statusCode = 204;
+          res.end();
+        });
+      });
+    },
+  };
+}
 
 export default defineConfig({
   tanstackStart: {
@@ -22,6 +50,7 @@ export default defineConfig({
         include: ["buffer", "events", "util", "stream", "process"],
         globals: { Buffer: true, process: true },
       }),
+      browserLogSinkPlugin(),
     ],
   },
 });
