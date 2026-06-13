@@ -45,8 +45,8 @@ function WorkspacePage() {
   const [muted, setMuted] = useState(false);
   const [onHold, setOnHold] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [agentLang, setAgentLang] = useState(DEFAULT_AGENT_LANGUAGE);
-  const [callerLang, setCallerLang] = useState(DEFAULT_CALLER_LANGUAGE);
+  const [agentLang, setAgentLang] = useState<string>(DEFAULT_AGENT_LANGUAGE);
+  const [callerLang, setCallerLang] = useState<string>(DEFAULT_CALLER_LANGUAGE);
   const [callState, setCallState] = useState<CallSession | null>(null);
 
   useEffect(() => {
