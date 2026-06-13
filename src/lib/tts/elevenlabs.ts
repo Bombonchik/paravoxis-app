@@ -4,16 +4,44 @@
 //
 // API key is read from VITE_EL_API_KEY at runtime.
 
-const ELEVEN_TTS_BASE = "https://api.elevenlabs.io/v1/text-to-speech";
-
-// Single multilingual voice — `eleven_turbo_v2_5` switches language automatically
-// based on the text. Voice "Rachel" works well across all supported languages.
-const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+const ELEVEN_BASE = "https://api.elevenlabs.io/v1";
 const MODEL_ID = "eleven_turbo_v2_5";
 
 function getApiKey(): string | null {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
   return env.VITE_EL_API_KEY || null;
+}
+
+// ElevenLabs free tier blocks "library voices" via the API. We can't hardcode
+// Rachel (21m00…) any more. Instead, list the account's available voices on
+// first call and cache the first one — that's guaranteed to be usable.
+let cachedVoiceId: string | null = null;
+let voicePromise: Promise<string | null> | null = null;
+async function resolveVoiceId(apiKey: string): Promise<string | null> {
+  if (cachedVoiceId) return cachedVoiceId;
+  if (voicePromise) return voicePromise;
+  voicePromise = (async () => {
+    try {
+      const res = await fetch(`${ELEVEN_BASE}/voices`, { headers: { "xi-api-key": apiKey } });
+      if (!res.ok) {
+        console.error("[tts/elevenlabs] /voices HTTP", res.status, await res.text().catch(() => ""));
+        return null;
+      }
+      const data = (await res.json()) as { voices?: Array<{ voice_id: string; name?: string }> };
+      const first = data.voices?.[0];
+      if (!first) {
+        console.error("[tts/elevenlabs] no voices on this account");
+        return null;
+      }
+      console.info("[tts/elevenlabs] using voice", first.name ?? "(unnamed)", first.voice_id);
+      cachedVoiceId = first.voice_id;
+      return cachedVoiceId;
+    } catch (err) {
+      console.error("[tts/elevenlabs] voices fetch failed", err);
+      return null;
+    }
+  })();
+  return voicePromise;
 }
 
 /** Synthesize translated text to MP3. Returns null on any failure (logged). */
@@ -25,8 +53,11 @@ export async function synthesize(_languageCode: string, text: string): Promise<B
     return null;
   }
 
+  const voiceId = await resolveVoiceId(apiKey);
+  if (!voiceId) return null;
+
   try {
-    const res = await fetch(`${ELEVEN_TTS_BASE}/${DEFAULT_VOICE_ID}?output_format=mp3_44100_128`, {
+    const res = await fetch(`${ELEVEN_BASE}/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
       method: "POST",
       headers: {
         "xi-api-key": apiKey,
