@@ -8,16 +8,16 @@ export const Route = createFileRoute("/")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "LinguaConnect — Real-time translated Amazon Connect agent workspace" },
+      { title: "LinguaConnect — Real-time translated call centre workspace" },
       {
         name: "description",
         content:
-          "Custom Amazon Connect agent workspace with live speech-to-speech translation between any supported caller and agent language.",
+          "Live speech-to-speech translation for call centre agents — auto-detect the caller's language and reply naturally in your own.",
       },
       { property: "og:title", content: "LinguaConnect" },
       {
         property: "og:description",
-        content: "Real-time translated Amazon Connect agent workspace.",
+        content: "Real-time translated call centre workspace.",
       },
     ],
   }),
@@ -52,7 +52,7 @@ function Landing() {
       <section className="mx-auto max-w-4xl px-6 pt-16 pb-12 text-center">
         <div className="inline-flex items-center gap-2 rounded-full border bg-card/50 px-3 py-1 text-xs text-muted-foreground">
           <Zap className="h-3 w-3 text-primary" />
-          An extension for Amazon Connect
+          Real-time translated call centre
         </div>
         <h1 className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-6xl">
           Speak any language.
@@ -60,7 +60,7 @@ function Landing() {
           <span className="text-primary">Answer every call.</span>
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-balance text-lg text-muted-foreground">
-          LinguaConnect translates Amazon Connect calls in real time. The caller speaks Czech, your
+          LinguaConnect translates live calls in real time. The caller speaks Czech, your
           agent hears Hindi, and the agent's reply is spoken back in Czech — automatically.
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -77,7 +77,7 @@ function Landing() {
         <Feature
           icon={<Mic className="h-5 w-5" />}
           title="Auto language detection"
-          body="AWS Transcribe identifies the caller's language live — no IVR prompts, no menus."
+          body="The caller's language is identified live — no IVR prompts, no menus."
         />
         <Feature
           icon={<Languages className="h-5 w-5" />}
@@ -86,13 +86,13 @@ function Landing() {
         />
         <Feature
           icon={<ShieldCheck className="h-5 w-5" />}
-          title="Headless Amazon Connect"
-          body="Built on amazon-connect-streams with your AWS account. Your call data never leaves your tenancy."
+          title="Secure by design"
+          body="Calls stay inside your own tenancy. Your conversation data is never shared."
         />
       </section>
 
       <footer className="mx-auto max-w-6xl px-6 py-10 text-center text-xs text-muted-foreground">
-        Built on Amazon Connect, AWS Transcribe & Polly, and Lovable AI.
+        LinguaConnect — built for modern multilingual contact centres.
       </footer>
     </div>
   );
