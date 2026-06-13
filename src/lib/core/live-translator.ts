@@ -50,24 +50,32 @@ export class LiveTranslator {
     console.info("[live-translator] sample rate:", sampleRate, "ctx state:", this.audioCtx.state);
 
     if (this.opts.speakTranslations) {
-      // Agent-side playback: speaker hears caller-side Polly translation.
       this.agentPlaybackEl = new Audio();
       this.agentPlaybackEl.autoplay = true;
 
-      // Mute the raw remote audio so the agent ONLY hears Polly's translated version.
       const raw = document.getElementById("paravoxis-remote-audio") as HTMLAudioElement | null;
-      if (raw) raw.muted = true;
+      if (raw) {
+        raw.muted = true;
+        console.info("[live-translator] muted raw remote-audio element so agent hears Polly only");
+      } else {
+        console.warn("[live-translator] paravoxis-remote-audio element not found");
+      }
 
-      // Customer-side playback: build a MediaStreamDestination and swap the agent's
-      // outbound RTC track to it so the customer hears Polly instead of raw mic.
       if (this.opts.agentSender) {
         this.outboundDest = this.audioCtx.createMediaStreamDestination();
         this.originalAgentTrack = this.opts.agentSender.track;
         const newTrack = this.outboundDest.stream.getAudioTracks()[0];
-        await this.opts.agentSender.replaceTrack(newTrack);
-        console.info("[live-translator] swapped agent outbound track for Polly destination");
+        try {
+          await this.opts.agentSender.replaceTrack(newTrack);
+          console.info(
+            "[live-translator] swapped agent outbound track for ElevenLabs destination",
+            "track id:", newTrack.id, "kind:", newTrack.kind, "enabled:", newTrack.enabled,
+          );
+        } catch (err) {
+          console.error("[live-translator] replaceTrack failed — customer will still hear raw agent mic", err);
+        }
       } else {
-        console.warn("[live-translator] no agent RTC sender — customer will hear raw agent mic");
+        console.error("[live-translator] no agent RTC sender — customer will hear raw agent mic");
       }
     }
 
@@ -142,15 +150,15 @@ export class LiveTranslator {
       if (!blob || this.disposed) return;
 
       if (speaker === "caller") {
-        // Caller spoke → translation goes to AGENT's speakers.
         if (this.agentPlaybackEl) {
           const url = URL.createObjectURL(blob);
           this.agentPlaybackEl.src = url;
-          await this.agentPlaybackEl.play().catch(() => undefined);
+          await this.agentPlaybackEl.play()
+            .then(() => console.info("[live-translator] playing caller→agent translation"))
+            .catch((e) => console.error("[live-translator] agent playback play() failed", e));
           this.agentPlaybackEl.onended = () => URL.revokeObjectURL(url);
         }
       } else {
-        // Agent spoke → translation goes to CUSTOMER via the swapped RTC track.
         await this.playToOutbound(blob);
       }
     } catch (err) {
@@ -160,14 +168,23 @@ export class LiveTranslator {
 
   /** Decode mp3 → schedule into the outbound MediaStreamDestination so the customer hears it. */
   private async playToOutbound(blob: Blob): Promise<void> {
-    if (!this.audioCtx || !this.outboundDest) return;
+    if (!this.audioCtx || !this.outboundDest) {
+      console.warn("[live-translator] outbound path missing — cannot send to customer", {
+        hasCtx: !!this.audioCtx, hasDest: !!this.outboundDest,
+      });
+      return;
+    }
     const arrayBuf = await blob.arrayBuffer();
-    const audioBuf = await this.audioCtx.decodeAudioData(arrayBuf).catch(() => null);
+    const audioBuf = await this.audioCtx.decodeAudioData(arrayBuf).catch((e) => {
+      console.error("[live-translator] decodeAudioData failed", e);
+      return null;
+    });
     if (!audioBuf || this.disposed) return;
     const src = this.audioCtx.createBufferSource();
     src.buffer = audioBuf;
     src.connect(this.outboundDest);
     src.start();
+    console.info("[live-translator] piping agent→customer translation (", audioBuf.duration.toFixed(2), "s )");
   }
 
   dispose(): void {
