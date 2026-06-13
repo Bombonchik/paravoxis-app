@@ -77,14 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Paravoxis" },
+      { name: "description", content: "A custom call centre dashboard with real-time, bi-directional language translation." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Paravoxis" },
+      { property: "og:description", content: "A custom call centre dashboard with real-time, bi-directional language translation." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Paravoxis" },
+      { name: "twitter:description", content: "A custom call centre dashboard with real-time, bi-directional language translation." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/9914c07e-048f-499c-b732-72a6623a75f2/id-preview-17e962dc--0ab1bb87-171b-45e4-967f-93c6980db8a8.lovable.app-1781348501997.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/9914c07e-048f-499c-b732-72a6623a75f2/id-preview-17e962dc--0ab1bb87-171b-45e4-967f-93c6980db8a8.lovable.app-1781348501997.png" },
     ],
     links: [
       {
