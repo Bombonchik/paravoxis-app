@@ -2,7 +2,7 @@
 // The agent's microphone is treated as the audio source for *both* speakers; the
 // operator toggles which side is "currently talking" with two push-to-talk buttons.
 // Each side opens its own Transcribe Streaming session in the speaker's language.
-import { synthesize } from "@/lib/aws/polly";
+import { synthesize } from "@/lib/tts/elevenlabs";
 import { startStreamingTranscription } from "@/lib/aws/transcribe";
 import { translate } from "@/lib/aws/translate";
 import { probeSampleRate } from "@/lib/audio/audio-context";

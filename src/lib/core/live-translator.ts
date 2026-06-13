@@ -7,7 +7,7 @@
 //   - Agent mic → transcribe → translate → Polly in caller's language
 //     → piped into a MediaStreamDestination whose track REPLACES the outbound
 //       WebRTC audio sender → customer hears the Polly voice instead of agent's raw speech.
-import { synthesize } from "@/lib/aws/polly";
+import { synthesize } from "@/lib/tts/elevenlabs";
 import { startStreamingTranscription } from "@/lib/aws/transcribe";
 import { translate } from "@/lib/aws/translate";
 import type { Speaker, TranscriptSegment } from "./types";
@@ -43,8 +43,11 @@ export class LiveTranslator {
   async start(): Promise<void> {
     console.info("[live-translator] start");
     this.audioCtx = new AudioContext();
+    if (this.audioCtx.state === "suspended") {
+      await this.audioCtx.resume().catch(() => undefined);
+    }
     const sampleRate = this.audioCtx.sampleRate;
-    console.info("[live-translator] sample rate:", sampleRate);
+    console.info("[live-translator] sample rate:", sampleRate, "ctx state:", this.audioCtx.state);
 
     if (this.opts.speakTranslations) {
       // Agent-side playback: speaker hears caller-side Polly translation.
