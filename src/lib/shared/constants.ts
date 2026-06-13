@@ -17,5 +17,5 @@ export const SUPPORTED_LANGUAGES = [
 
 export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
 
-export const DEFAULT_AGENT_LANGUAGE: LanguageCode = "hi-IN";
-export const DEFAULT_CALLER_LANGUAGE: LanguageCode = "cs-CZ";
+export const DEFAULT_AGENT_LANGUAGE: LanguageCode = "cs-CZ";
+export const DEFAULT_CALLER_LANGUAGE: LanguageCode = "en-US";

@@ -37,6 +37,13 @@ export class TranslationSession {
     this.emit();
   }
 
+  removeSegment(id: string) {
+    const next = this.state.segments.filter((s) => s.id !== id);
+    if (next.length === this.state.segments.length) return;
+    this.state = { ...this.state, segments: next };
+    this.emit();
+  }
+
   setLanguage(speaker: Speaker, language: string) {
     this.state =
       speaker === "caller"
