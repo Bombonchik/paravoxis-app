@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Pause, Play, Loader2, Languages, Radio } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Pause, Play, Loader2, Languages, Radio, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,17 +15,32 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { AppShell } from "@/features/agent-workspace/app-shell";
 import {
-  createMockStreamsClient,
+  createStreamsClient,
   type AgentState,
   type ConnectContact,
 } from "@/lib/connect/streams-client";
 import { TranslationSession } from "@/lib/core/translation-session";
-import type { CallSession, TranscriptSegment } from "@/lib/core/types";
+import { LiveTranslator } from "@/lib/core/live-translator";
+import { DemoTranslator } from "@/lib/core/demo-translator";
+import type { CallSession, Speaker, TranscriptSegment } from "@/lib/core/types";
+import { loadAwsConfig } from "@/lib/aws/config";
+import type { StreamsClient } from "@/lib/connect/streams-client";
+
+async function waitForCustomerAudio(client: StreamsClient, timeoutMs: number): Promise<MediaStream | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const stream = client.getCustomerAudioStream();
+    if (stream && stream.getAudioTracks().length > 0) return stream;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return null;
+}
 import {
   SUPPORTED_LANGUAGES,
   DEFAULT_AGENT_LANGUAGE,
   DEFAULT_CALLER_LANGUAGE,
 } from "@/lib/shared/constants";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/workspace")({
   head: () => ({
@@ -38,8 +53,10 @@ export const Route = createFileRoute("/_authenticated/workspace")({
 });
 
 function WorkspacePage() {
-  const clientRef = useRef(createMockStreamsClient());
+  const clientRef = useRef(createStreamsClient());
   const sessionRef = useRef<TranslationSession | null>(null);
+  const translatorRef = useRef<LiveTranslator | null>(null);
+  const ccpContainerRef = useRef<HTMLDivElement | null>(null);
   const [agentState, setAgentState] = useState<AgentState>("offline");
   const [contact, setContact] = useState<ConnectContact | null>(null);
   const [muted, setMuted] = useState(false);
@@ -48,66 +65,181 @@ function WorkspacePage() {
   const [agentLang, setAgentLang] = useState<string>(DEFAULT_AGENT_LANGUAGE);
   const [callerLang, setCallerLang] = useState<string>(DEFAULT_CALLER_LANGUAGE);
   const [callState, setCallState] = useState<CallSession | null>(null);
+  const [speakOut, setSpeakOut] = useState(true);
+  const [demoActive, setDemoActive] = useState<Record<Speaker, boolean>>({ caller: false, agent: false });
+  const [demoStarting, setDemoStarting] = useState(false);
+  const demoRef = useRef<DemoTranslator | null>(null);
+  const isMock = !loadAwsConfig()?.connectInstanceUrl;
+  const hasAws = !!loadAwsConfig()?.accessKeyId;
+
+  function startTranslation(contactId: string) {
+    if (translatorRef.current) translatorRef.current.dispose();
+    sessionRef.current = new TranslationSession({
+      contactId,
+      callerLanguage: callerLang,
+      agentLanguage: agentLang,
+    });
+    sessionRef.current.subscribe(setCallState);
+
+    void (async () => {
+      try {
+        console.info("[workspace] contact connected, waiting for customer audio stream…");
+        const customerAudio = await waitForCustomerAudio(clientRef.current, 8000);
+        if (!customerAudio) {
+          console.error("[workspace] customer audio stream never appeared");
+          toast.error("Customer audio stream never appeared — check DevTools console.");
+          return;
+        }
+        console.info("[workspace] got customer audio stream", {
+          tracks: customerAudio.getAudioTracks().map((t) => ({ id: t.id, label: t.label, enabled: t.enabled, muted: t.muted })),
+        });
+        const agentMic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.info("[workspace] got agent mic", { tracks: agentMic.getAudioTracks().length });
+        const translator = new LiveTranslator({
+          session: sessionRef.current!,
+          customerAudio,
+          agentAudio: agentMic,
+          callerLanguage: callerLang,
+          agentLanguage: agentLang,
+          speakTranslations: speakOut,
+          agentSender: clientRef.current.getAgentRtpSender(),
+          onError: (e) => toast.error(`Translation pipeline error: ${(e as Error).message}`),
+        });
+        translatorRef.current = translator;
+        console.info("[workspace] starting LiveTranslator…");
+        await translator.start();
+        console.info("[workspace] LiveTranslator started successfully");
+      } catch (e) {
+        console.error("[workspace] live translation failed to start:", e);
+        toast.error(`Translation failed: ${(e as Error).message ?? String(e)}`);
+      }
+    })();
+  }
+
+  function stopTranslation() {
+    translatorRef.current?.dispose();
+    translatorRef.current = null;
+    sessionRef.current = null;
+    setCallState(null);
+  }
 
   useEffect(() => {
     const off1 = clientRef.current.onAgentStateChange(setAgentState);
     const off2 = clientRef.current.onContact((c) => {
       setContact(c);
       if (c.state === "connected" && !sessionRef.current) {
-        sessionRef.current = new TranslationSession({
-          contactId: c.contactId,
-          callerLanguage: callerLang,
-          agentLanguage: agentLang,
-        });
-        sessionRef.current.subscribe(setCallState);
+        startTranslation(c.contactId);
       }
       if (c.state === "ended") {
-        sessionRef.current = null;
-        setCallState(null);
+        stopTranslation();
       }
     });
     return () => {
       off1();
       off2();
+      translatorRef.current?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function connect() {
+    if (!ccpContainerRef.current) return;
     setConnecting(true);
-    await clientRef.current.connect("https://example.my.connect.aws", document.body);
-    setConnecting(false);
+    try {
+      await clientRef.current.connect(ccpContainerRef.current);
+    } catch (e) {
+      toast.error(`Failed to connect to CCP: ${(e as Error).message}`);
+    } finally {
+      setConnecting(false);
+    }
   }
 
   async function goAvailable() {
     await clientRef.current.setAgentState("available");
   }
 
-  async function simulateIncoming() {
-    // Phase-1 mock so the UI is interactive before AWS is wired up.
-    const fake: ConnectContact = {
-      contactId: `mock-${Date.now()}`,
-      callerNumber: "+420 720 555 014",
-      attributes: { caller_language: callerLang },
-      state: "connected",
-    };
-    setContact(fake);
-    await clientRef.current.acceptContact(fake.contactId);
-    sessionRef.current = new TranslationSession({
-      contactId: fake.contactId,
-      callerLanguage: callerLang,
-      agentLanguage: agentLang,
-    });
-    sessionRef.current.subscribe(setCallState);
-  }
-
   async function hangup() {
     if (contact) {
       await clientRef.current.hangup(contact.contactId);
       setContact({ ...contact, state: "ended" });
-      sessionRef.current = null;
-      setCallState(null);
+      stopTranslation();
     }
+  }
+
+  async function accept() {
+    if (!contact) return;
+    await clientRef.current.acceptContact(contact.contactId);
+  }
+
+  async function toggleMute() {
+    const next = await clientRef.current.toggleMute();
+    setMuted(next);
+  }
+
+  async function toggleHold() {
+    const next = await clientRef.current.toggleHold();
+    setOnHold(next);
+  }
+
+  async function ensureDemoStarted(): Promise<DemoTranslator | null> {
+    if (demoRef.current) return demoRef.current;
+    setDemoStarting(true);
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const session = new TranslationSession({
+        contactId: `demo-${Date.now()}`,
+        callerLanguage: callerLang,
+        agentLanguage: agentLang,
+      });
+      session.subscribe(setCallState);
+      sessionRef.current = session;
+      setContact({
+        contactId: session.snapshot.contactId,
+        callerNumber: "Demo session",
+        attributes: {},
+        state: "connected",
+      });
+      const translator = new DemoTranslator({
+        session,
+        mic,
+        languages: { caller: callerLang, agent: agentLang },
+        speakTranslations: speakOut,
+        onError: (e) => toast.error(`Translation error: ${(e as Error).message}`),
+      });
+      demoRef.current = translator;
+      return translator;
+    } catch (e) {
+      toast.error(`Could not start demo: ${(e as Error).message}`);
+      return null;
+    } finally {
+      setDemoStarting(false);
+    }
+  }
+
+  async function toggleDemoSpeaker(speaker: Speaker) {
+    const translator = await ensureDemoStarted();
+    if (!translator) return;
+    if (translator.isActive(speaker)) {
+      await translator.stopSpeaking(speaker);
+      setDemoActive((prev) => ({ ...prev, [speaker]: false }));
+    } else {
+      try {
+        await translator.startSpeaking(speaker);
+        setDemoActive((prev) => ({ ...prev, [speaker]: true }));
+      } catch {
+        /* error already toasted */
+      }
+    }
+  }
+
+  async function endDemo() {
+    if (!demoRef.current) return;
+    await demoRef.current.dispose();
+    demoRef.current = null;
+    setDemoActive({ caller: false, agent: false });
+    sessionRef.current = null;
+    setCallState(null);
+    setContact(null);
   }
 
   function addDemoSegment(speaker: "caller" | "agent") {
@@ -146,17 +278,44 @@ function WorkspacePage() {
             contact={contact}
             muted={muted}
             onHold={onHold}
-            onSimulate={simulateIncoming}
+            isMock={isMock}
+            onAccept={accept}
             onHangup={hangup}
-            onToggleMute={() => setMuted((m) => !m)}
-            onToggleHold={() => setOnHold((h) => !h)}
+            onToggleMute={toggleMute}
+            onToggleHold={toggleHold}
           />
           <LanguagePanel
             callerLang={callerLang}
             agentLang={agentLang}
+            speakOut={speakOut}
             onCallerChange={setCallerLang}
             onAgentChange={setAgentLang}
+            onSpeakOutChange={setSpeakOut}
           />
+          {isMock ? (
+            <DemoPanel
+              hasAws={hasAws}
+              starting={demoStarting}
+              active={demoActive}
+              callerLang={callerLang}
+              agentLang={agentLang}
+              hasSession={!!sessionRef.current}
+              onToggle={toggleDemoSpeaker}
+              onEnd={endDemo}
+            />
+          ) : null}
+          <div
+            ref={ccpContainerRef}
+            id="ccp-container"
+            className="h-[460px] w-full overflow-hidden rounded-md border bg-card"
+            style={{ display: isMock ? "none" : "block" }}
+          />
+          {/* Hidden <audio> element that plays the customer voice. With
+              allowFramedSoftphone:false, the CCP iframe no longer plays the
+              remote audio — it's our job. The RTC capture in streams-client.ts
+              binds this element's srcObject when the peer connection's
+              ontrack fires. */}
+          <audio id="paravoxis-remote-audio" autoPlay playsInline className="hidden" />
         </aside>
 
         <section className="min-h-[70vh]">
@@ -222,7 +381,8 @@ function CallControls({
   contact,
   muted,
   onHold,
-  onSimulate,
+  isMock,
+  onAccept,
   onHangup,
   onToggleMute,
   onToggleHold,
@@ -230,16 +390,33 @@ function CallControls({
   contact: ConnectContact | null;
   muted: boolean;
   onHold: boolean;
-  onSimulate: () => void;
+  isMock: boolean;
+  onAccept: () => void;
   onHangup: () => void;
   onToggleMute: () => void;
   onToggleHold: () => void;
 }) {
+  const ringing = contact && contact.state === "connecting";
   const live = contact && contact.state === "connected";
   return (
     <Card className="p-4 space-y-3">
       <div className="text-xs uppercase tracking-wide text-muted-foreground">Active contact</div>
-      {live ? (
+      {ringing ? (
+        <>
+          <div>
+            <div className="font-medium animate-pulse">{contact.callerNumber ?? "Incoming call"}</div>
+            <div className="text-xs text-muted-foreground">Ringing… ID {contact.contactId.slice(0, 12)}…</div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={onAccept}>
+              <Phone className="mr-2 h-4 w-4" /> Answer
+            </Button>
+            <Button variant="destructive" size="sm" onClick={onHangup}>
+              <PhoneOff className="mr-2 h-4 w-4" /> Reject
+            </Button>
+          </div>
+        </>
+      ) : live ? (
         <>
           <div>
             <div className="font-medium">{contact.callerNumber ?? "Unknown caller"}</div>
@@ -259,11 +436,76 @@ function CallControls({
           </div>
         </>
       ) : (
+        <p className="text-sm text-muted-foreground">
+          {isMock
+            ? "No Connect contact. Use the Demo translator panel below to try the pipeline."
+            : "Waiting for a contact from Amazon Connect…"}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function DemoPanel({
+  hasAws,
+  starting,
+  active,
+  callerLang,
+  agentLang,
+  hasSession,
+  onToggle,
+  onEnd,
+}: {
+  hasAws: boolean;
+  starting: boolean;
+  active: Record<Speaker, boolean>;
+  callerLang: string;
+  agentLang: string;
+  hasSession: boolean;
+  onToggle: (speaker: Speaker) => void;
+  onEnd: () => void;
+}) {
+  const callerLabel = SUPPORTED_LANGUAGES.find((l) => l.code === callerLang)?.label ?? callerLang;
+  const agentLabel = SUPPORTED_LANGUAGES.find((l) => l.code === agentLang)?.label ?? agentLang;
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">Demo translator</div>
+      {!hasAws ? (
+        <p className="text-sm text-muted-foreground">
+          Add AWS credentials in <span className="font-medium">Settings → AWS</span> to enable the live
+          translation demo.
+        </p>
+      ) : (
         <>
-          <p className="text-sm text-muted-foreground">No active call.</p>
-          <Button size="sm" className="w-full" onClick={onSimulate}>
-            <Phone className="mr-2 h-4 w-4" /> Simulate incoming call
+          <p className="text-xs text-muted-foreground">
+            One mic, two roles. Click a button, speak the role's language, click again to stop. Each
+            utterance is transcribed, translated, and (if enabled) spoken back via Polly.
+          </p>
+          <Button
+            variant={active.caller ? "secondary" : "outline"}
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => onToggle("caller")}
+            disabled={starting}
+          >
+            {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mic className="mr-2 h-4 w-4" />}
+            {active.caller ? `Listening as caller (${callerLabel})…` : `Talk as caller (${callerLabel})`}
           </Button>
+          <Button
+            variant={active.agent ? "secondary" : "outline"}
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => onToggle("agent")}
+            disabled={starting}
+          >
+            {starting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mic className="mr-2 h-4 w-4" />}
+            {active.agent ? `Listening as agent (${agentLabel})…` : `Talk as agent (${agentLabel})`}
+          </Button>
+          {hasSession ? (
+            <Button variant="destructive" size="sm" className="w-full" onClick={onEnd}>
+              <PhoneOff className="mr-2 h-4 w-4" /> End demo
+            </Button>
+          ) : null}
         </>
       )}
     </Card>
@@ -273,13 +515,17 @@ function CallControls({
 function LanguagePanel({
   callerLang,
   agentLang,
+  speakOut,
   onCallerChange,
   onAgentChange,
+  onSpeakOutChange,
 }: {
   callerLang: string;
   agentLang: string;
+  speakOut: boolean;
   onCallerChange: (v: string) => void;
   onAgentChange: (v: string) => void;
+  onSpeakOutChange: (v: boolean) => void;
 }) {
   return (
     <Card className="p-4 space-y-3">
@@ -288,9 +534,18 @@ function LanguagePanel({
       </div>
       <LanguageSelect label="Caller speaks" value={callerLang} onChange={onCallerChange} />
       <LanguageSelect label="Agent speaks" value={agentLang} onChange={onAgentChange} />
+      <Button
+        size="sm"
+        variant={speakOut ? "secondary" : "outline"}
+        className="w-full"
+        onClick={() => onSpeakOutChange(!speakOut)}
+      >
+        {speakOut ? <Volume2 className="mr-2 h-4 w-4" /> : <VolumeX className="mr-2 h-4 w-4" />}
+        {speakOut ? "Speaking translations (Polly)" : "Translation speech off"}
+      </Button>
       <p className="text-xs text-muted-foreground">
-        Caller language is auto-detected from the live stream once AWS Transcribe is wired up; you
-        can override it here.
+        Each side is transcribed by AWS Transcribe Streaming, translated with Amazon Translate, and
+        — when enabled — spoken back via Polly.
       </p>
     </Card>
   );

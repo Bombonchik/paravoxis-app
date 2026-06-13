@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { AppShell } from "@/features/agent-workspace/app-shell";
 import { SUPPORTED_LANGUAGES } from "@/lib/shared/constants";
+import { loadAwsConfig, saveAwsConfig, type AwsRuntimeConfig } from "@/lib/aws/config";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/settings")({
@@ -35,11 +36,23 @@ function SettingsPage() {
   const [agentLanguage, setAgentLanguage] = useState("hi-IN");
   const [connectUsername, setConnectUsername] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
+  const [aws, setAws] = useState<AwsRuntimeConfig>({
+    region: "us-east-1",
+    accessKeyId: "",
+    secretAccessKey: "",
+    sessionToken: "",
+    connectInstanceUrl: "",
+  });
 
   useEffect(() => {
     (async () => {
+      const stored = loadAwsConfig();
+      if (stored) setAws({ sessionToken: "", ...stored });
       const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) return;
+      if (!userData.user) {
+        setLoading(false);
+        return;
+      }
       const [{ data: profile }, { data: rolesData }] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", userData.user.id).maybeSingle(),
         supabase.from("user_roles").select("role").eq("user_id", userData.user.id),
@@ -56,9 +69,17 @@ function SettingsPage() {
 
   async function save() {
     setSaving(true);
+    saveAwsConfig({
+      region: aws.region.trim(),
+      accessKeyId: aws.accessKeyId.trim(),
+      secretAccessKey: aws.secretAccessKey.trim(),
+      sessionToken: aws.sessionToken?.trim() || undefined,
+      connectInstanceUrl: aws.connectInstanceUrl.trim().replace(/\/$/, ""),
+    });
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) {
       setSaving(false);
+      toast.success("AWS settings saved locally");
       return;
     }
     const { error } = await supabase
@@ -71,7 +92,7 @@ function SettingsPage() {
       .eq("id", userData.user.id);
     setSaving(false);
     if (error) toast.error(error.message);
-    else toast.success("Profile saved");
+    else toast.success("Settings saved");
   }
 
   return (
@@ -150,7 +171,7 @@ function SettingsPage() {
               <CardHeader>
                 <CardTitle>Amazon Connect</CardTitle>
                 <CardDescription>
-                  Map this account to a Connect agent username. Used when claiming contacts.
+                  Map this account to a Connect agent username and point the CCP at your instance.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -163,10 +184,66 @@ function SettingsPage() {
                     onChange={(e) => setConnectUsername(e.target.value)}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Connect instance URL and AWS credentials are configured at the workspace level by a
-                  supervisor. (Coming in phase 2.)
-                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="connect-url">Connect instance URL</Label>
+                  <Input
+                    id="connect-url"
+                    placeholder="https://your-instance.my.connect.aws"
+                    value={aws.connectInstanceUrl}
+                    onChange={(e) => setAws({ ...aws, connectInstanceUrl: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Add this origin to the Connect instance's "Approved origins" list, otherwise the CCP
+                    iframe will refuse to load.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>AWS credentials</CardTitle>
+                <CardDescription>
+                  Used by Transcribe Streaming, Translate, and Polly. Stored in localStorage on this
+                  machine only — for production deployments use Cognito Identity Pools instead.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="aws-region">Region</Label>
+                  <Input
+                    id="aws-region"
+                    placeholder="us-east-1"
+                    value={aws.region}
+                    onChange={(e) => setAws({ ...aws, region: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="aws-access-key">Access key ID</Label>
+                  <Input
+                    id="aws-access-key"
+                    value={aws.accessKeyId}
+                    onChange={(e) => setAws({ ...aws, accessKeyId: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="aws-secret-key">Secret access key</Label>
+                  <Input
+                    id="aws-secret-key"
+                    type="password"
+                    value={aws.secretAccessKey}
+                    onChange={(e) => setAws({ ...aws, secretAccessKey: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="aws-session-token">Session token (optional)</Label>
+                  <Input
+                    id="aws-session-token"
+                    type="password"
+                    value={aws.sessionToken ?? ""}
+                    onChange={(e) => setAws({ ...aws, sessionToken: e.target.value })}
+                  />
+                </div>
               </CardContent>
             </Card>
 
