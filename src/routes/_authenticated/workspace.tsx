@@ -479,7 +479,7 @@ function DemoPanel({
         <>
           <p className="text-xs text-muted-foreground">
             One mic, two roles. Click a button, speak the role's language, click again to stop. Each
-            utterance is transcribed, translated, and (if enabled) spoken back via Polly.
+            utterance is transcribed, translated, and (if enabled) spoken back via ElevenLabs.
           </p>
           <Button
             variant={active.caller ? "secondary" : "outline"}
@@ -541,11 +541,11 @@ function LanguagePanel({
         onClick={() => onSpeakOutChange(!speakOut)}
       >
         {speakOut ? <Volume2 className="mr-2 h-4 w-4" /> : <VolumeX className="mr-2 h-4 w-4" />}
-        {speakOut ? "Speaking translations (Polly)" : "Translation speech off"}
+        {speakOut ? "Speaking translations (ElevenLabs)" : "Translation speech off"}
       </Button>
       <p className="text-xs text-muted-foreground">
         Each side is transcribed by AWS Transcribe Streaming, translated with Amazon Translate, and
-        — when enabled — spoken back via Polly.
+        — when enabled — spoken back via ElevenLabs.
       </p>
     </Card>
   );
